@@ -1,0 +1,18 @@
+# friendly-ghost configuration
+# Copy to /etc/friendly-ghost/config.toml and edit
+
+[journal]
+units = ["nginx", "sshd"]
+priority = "err"  # emerg, alert, crit, err, warning, notice, info, debug
+
+[email]
+smtp_host = "mail.example.com"
+smtp_port = 587
+username = "alerts@example.com"
+# Set password via environment variable: FRIENDLY_GHOST_SMTP_PASSWORD
+from = "alerts@example.com"
+to = ["admin@example.com"]
+subject_prefix = "[friendly-ghost]"
+
+[state]
+cursor_file = "/var/lib/friendly-ghost/cursor"
