@@ -40,6 +40,63 @@ export FRIENDLY_GHOST_SMTP_PASSWORD=secret
 
 `FRIENDLY_GHOST_SMTP_HOST` can also override `smtp_host`.
 
+## NixOS Module
+
+Add the flake to your inputs and import the module:
+
+```nix
+# flake.nix
+{
+  inputs.friendly-ghost.url = "github:your-user/friendly-ghost";
+
+  outputs = { self, nixpkgs, friendly-ghost, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      modules = [
+        friendly-ghost.nixosModules.default
+        {
+          services.friendly-ghost = {
+            enable = true;
+            interval = "*:0/5"; # every 5 minutes (default)
+
+            journal = {
+              units = [ "nginx" "sshd" "web-.*" ];
+              priority = "err";
+            };
+
+            email = {
+              smtpHost = "mail.example.com";
+              smtpPort = 587;
+              username = "alerts@example.com";
+              from = "alerts@example.com";
+              to = [ "admin@example.com" ];
+              subjectPrefix = "[friendly-ghost]";
+            };
+
+            environmentFile = "/run/secrets/friendly-ghost.env";
+
+            # optional LLM analysis
+            llm = {
+              enable = true;
+              apiUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+              model = "gemini-2.5-flash";
+              systemPromptFile = "/etc/friendly-ghost/prompt.txt";
+            };
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+The environment file should contain secrets:
+
+```
+FRIENDLY_GHOST_SMTP_PASSWORD=secret
+```
+
+The module creates a systemd timer and service with `DynamicUser`, `StateDirectory`, and journal read access handled automatically.
+
 ## Building
 
 Requires systemd headers (`systemdLibs` on NixOS, `libsystemd-dev` on Debian).

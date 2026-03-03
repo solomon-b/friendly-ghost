@@ -15,6 +15,7 @@
 - Priority filtering by severity level (emerg through debug). Lower numeric value = higher severity.
 - 21 unit tests covering config parsing, priority ordering, entry filtering, cursor round-trips, and report formatting.
 - Regex unit matching: `units` entries are compiled as regex patterns (auto-anchored). Plain names like `"nginx"` match exactly; patterns like `"web-.*"` match dynamically. Invalid patterns fail at config load time. Adds `regex` crate dependency.
+- NixOS module (`nixosModules.default` flake output). Typed options under `services.friendly-ghost` for all config fields, systemd timer+service pair, `DynamicUser` isolation, and `environmentFile` support for secrets.
 
 ### Changed
 
