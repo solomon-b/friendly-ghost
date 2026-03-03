@@ -59,23 +59,15 @@ pub fn save_cursor(path: &Path, cursor: &str) -> Result<(), AppError> {
 /// Query the systemd journal for entries since the given cursor.
 /// If cursor is None (first run), seeks to the tail and returns `FirstRun`
 /// with the baseline cursor position for the next run.
-pub fn query_journal(cursor: Option<&str>, units: &[String]) -> Result<JournalResult, AppError> {
+///
+/// Reads all entries since the cursor; the caller filters via `filter_entries`.
+pub fn query_journal(cursor: Option<&str>) -> Result<JournalResult, AppError> {
     use systemd::journal;
 
     let mut j = journal::OpenOptions::default()
         .system(true)
         .open()
         .map_err(|e| AppError::Journal(format!("failed to open journal: {e}").into()))?;
-
-    // Add unit matches with OR between them
-    for (i, unit) in units.iter().enumerate() {
-        if i > 0 {
-            j.match_or()
-                .map_err(|e| AppError::Journal(format!("failed to add OR: {e}").into()))?;
-        }
-        j.match_add("_SYSTEMD_UNIT", format!("{unit}.service"))
-            .map_err(|e| AppError::Journal(format!("failed to add match for {unit}: {e}").into()))?;
-    }
 
     match cursor {
         Some(c) => {

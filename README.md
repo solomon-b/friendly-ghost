@@ -17,7 +17,7 @@ Copy `config.example.toml` and edit:
 
 ```toml
 [journal]
-units = ["nginx", "sshd"]
+units = ["nginx", "sshd", "web-.*"]  # supports regex patterns
 priority = "err"  # emerg, alert, crit, err, warning, notice, info, debug
 
 [email]

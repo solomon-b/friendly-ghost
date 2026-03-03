@@ -40,7 +40,13 @@ fn run(cli: Cli) -> Result<(), AppError> {
     let cfg = config::load(&cli.config, config::EnvOverrides::from_env())?;
     let cursor = journal::read_cursor(&cfg.state.cursor_file)?;
 
-    match journal::query_journal(cursor.as_deref(), &cfg.journal.units)? {
+    let matcher = cfg
+        .journal
+        .unit_matcher
+        .as_ref()
+        .expect("unit_matcher is always built by config::load");
+
+    match journal::query_journal(cursor.as_deref())? {
         JournalResult::FirstRun(Some(baseline_cursor)) => {
             journal::save_cursor(&cfg.state.cursor_file, &baseline_cursor)?;
             eprintln!("first run: cursor saved, will report new entries on next run");
@@ -55,7 +61,7 @@ fn run(cli: Cli) -> Result<(), AppError> {
             }
 
             let entries =
-                filter::filter_entries(raw_entries, &cfg.journal.units, cfg.journal.priority);
+                filter::filter_entries(raw_entries, matcher, cfg.journal.priority);
 
             if !entries.is_empty() {
                 let hostname = hostname();

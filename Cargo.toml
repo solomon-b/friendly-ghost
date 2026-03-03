@@ -9,6 +9,7 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "r
 serde = { version = "1", features = ["derive"] }
 systemd = "0.10"
 thiserror = "2"
+regex = "1"
 toml = "0.8"
 
 [dev-dependencies]

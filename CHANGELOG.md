@@ -14,6 +14,7 @@
 - Environment variable overrides for SMTP password (`FRIENDLY_GHOST_SMTP_PASSWORD`) and host (`FRIENDLY_GHOST_SMTP_HOST`).
 - Priority filtering by severity level (emerg through debug). Lower numeric value = higher severity.
 - 21 unit tests covering config parsing, priority ordering, entry filtering, cursor round-trips, and report formatting.
+- Regex unit matching: `units` entries are compiled as regex patterns (auto-anchored). Plain names like `"nginx"` match exactly; patterns like `"web-.*"` match dynamically. Invalid patterns fail at config load time. Adds `regex` crate dependency.
 
 ### Changed
 

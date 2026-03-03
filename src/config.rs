@@ -3,18 +3,21 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::error::AppError;
+use crate::filter::UnitMatcher;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Config {
     pub journal: JournalConfig,
     pub email: EmailConfig,
     pub state: StateConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct JournalConfig {
     pub units: Vec<String>,
     pub priority: Priority,
+    #[serde(skip)]
+    pub unit_matcher: Option<UnitMatcher>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -113,6 +116,8 @@ pub fn load(path: &Path, overrides: EnvOverrides) -> Result<Config, AppError> {
             "email.to must have at least one recipient".into(),
         ));
     }
+
+    config.journal.unit_matcher = Some(UnitMatcher::new(&config.journal.units)?);
 
     if let Some(pw) = overrides.smtp_password {
         config.email.password = Some(pw);
@@ -254,5 +259,43 @@ cursor_file = "/tmp/friendly-ghost-cursor"
         };
         let config = load(tmp.path(), overrides).unwrap();
         assert_eq!(config.email.smtp_host, "override.example.com");
+    }
+
+    #[test]
+    fn builds_unit_matcher_on_load() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(sample_toml().as_bytes()).unwrap();
+        let config = load(tmp.path(), no_overrides()).unwrap();
+        let matcher = config.journal.unit_matcher.as_ref().unwrap();
+        assert!(matcher.is_match("nginx"));
+        assert!(matcher.is_match("sshd"));
+        assert!(!matcher.is_match("postgres"));
+    }
+
+    #[test]
+    fn rejects_invalid_regex_in_units() {
+        let bad = sample_toml().replace(
+            r#"units = ["nginx", "sshd"]"#,
+            r#"units = ["[invalid"]"#,
+        );
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(bad.as_bytes()).unwrap();
+        let err = load(tmp.path(), no_overrides()).unwrap_err().to_string();
+        assert!(err.contains("invalid unit pattern"), "got: {err}");
+    }
+
+    #[test]
+    fn loads_config_with_regex_units() {
+        let with_regex = sample_toml().replace(
+            r#"units = ["nginx", "sshd"]"#,
+            r#"units = ["nginx", "web-.*"]"#,
+        );
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(with_regex.as_bytes()).unwrap();
+        let config = load(tmp.path(), no_overrides()).unwrap();
+        let matcher = config.journal.unit_matcher.as_ref().unwrap();
+        assert!(matcher.is_match("nginx"));
+        assert!(matcher.is_match("web-frontend"));
+        assert!(!matcher.is_match("sshd"));
     }
 }
