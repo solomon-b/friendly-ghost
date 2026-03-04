@@ -97,7 +97,11 @@ Add the flake to your inputs and import the module:
               subjectPrefix = "[friendly-ghost]";
             };
 
-            environmentFile = "/run/secrets/friendly-ghost.env";
+            # option 1: per-secret files (works with sops-nix, agenix, etc.)
+            email.passwordFile = "/run/secrets/friendly-ghost/smtp-password";
+
+            # option 2: single env file with KEY=VALUE lines
+            # environmentFile = "/run/secrets/friendly-ghost.env";
 
             # optional LLM analysis
             llm = {
@@ -105,6 +109,7 @@ Add the flake to your inputs and import the module:
               apiUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
               model = "gemini-2.5-flash";
               systemPromptFile = "/etc/friendly-ghost/prompt.txt";
+              apiKeyFile = "/run/secrets/friendly-ghost/llm-api-key";
             };
           };
         }
@@ -114,7 +119,38 @@ Add the flake to your inputs and import the module:
 }
 ```
 
-The environment file should contain secrets:
+### Secrets
+
+There are two ways to provide secrets. Use one or the other, not both.
+
+**Per-secret files** (recommended — works with sops-nix, agenix, and similar):
+
+```nix
+services.friendly-ghost = {
+  email.passwordFile = "/run/secrets/friendly-ghost/smtp-password";
+  llm.apiKeyFile = "/run/secrets/friendly-ghost/llm-api-key";
+};
+```
+
+Each file should contain just the raw secret value, no trailing newline.
+
+**Example with sops-nix:**
+
+```nix
+sops.secrets."friendly-ghost/smtp-password" = {};
+sops.secrets."friendly-ghost/llm-api-key" = {};
+
+services.friendly-ghost = {
+  email.passwordFile = config.sops.secrets."friendly-ghost/smtp-password".path;
+  llm.apiKeyFile = config.sops.secrets."friendly-ghost/llm-api-key".path;
+};
+```
+
+**Environment file** (legacy — single file with `KEY=VALUE` lines):
+
+```nix
+services.friendly-ghost.environmentFile = "/run/secrets/friendly-ghost.env";
+```
 
 ```
 FRIENDLY_GHOST_SMTP_PASSWORD=secret

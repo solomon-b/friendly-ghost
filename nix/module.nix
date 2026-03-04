@@ -91,6 +91,13 @@ in
         default = "[friendly-ghost]";
         description = "Prefix for email subject lines.";
       };
+
+      passwordFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "Path to a file containing the SMTP password. The file should contain the raw secret with no trailing newline. Compatible with sops-nix, agenix, and similar secret managers.";
+        example = "/run/secrets/friendly-ghost/smtp-password";
+      };
     };
 
     environmentFile = mkOption {
@@ -132,17 +139,43 @@ in
         default = 4096;
         description = "Maximum tokens in LLM response.";
       };
+
+      apiKeyFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "Path to a file containing the LLM API key. The file should contain the raw secret with no trailing newline. Compatible with sops-nix, agenix, and similar secret managers.";
+        example = "/run/secrets/friendly-ghost/llm-api-key";
+      };
     };
   };
 
   config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = !(cfg.email.passwordFile != null && cfg.environmentFile != null);
+        message = "services.friendly-ghost: both email.passwordFile and environmentFile are set. email.passwordFile takes precedence for FRIENDLY_GHOST_SMTP_PASSWORD.";
+      }
+    ];
+
     systemd.services.friendly-ghost = {
       description = "friendly-ghost journal monitor";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = "${self.packages.${pkgs.system}.default}/bin/friendly-ghost --config ${configFile}";
+        ExecStart = let
+          wrapper = pkgs.writeShellScript "friendly-ghost-start" ''
+            ${lib.optionalString (cfg.email.passwordFile != null) ''
+              FRIENDLY_GHOST_SMTP_PASSWORD="$(< ${lib.escapeShellArg cfg.email.passwordFile})"
+              export FRIENDLY_GHOST_SMTP_PASSWORD
+            ''}
+            ${lib.optionalString (cfg.llm.enable && cfg.llm.apiKeyFile != null) ''
+              FRIENDLY_GHOST_LLM_API_KEY="$(< ${lib.escapeShellArg cfg.llm.apiKeyFile})"
+              export FRIENDLY_GHOST_LLM_API_KEY
+            ''}
+            exec ${self.packages.${pkgs.system}.default}/bin/friendly-ghost --config ${configFile}
+          '';
+        in "${wrapper}";
         DynamicUser = true;
         StateDirectory = "friendly-ghost";
         SupplementaryGroups = [ "systemd-journal" ];
