@@ -41,16 +41,39 @@ impl UnitMatcher {
     }
 }
 
-/// Filter entries by configured units and minimum priority level.
+/// Matches log messages against compiled regex patterns for ignoring.
+#[derive(Debug)]
+pub struct IgnoreMatcher {
+    patterns: RegexSet,
+}
+
+impl IgnoreMatcher {
+    pub fn new(patterns: &[String]) -> Result<Self, AppError> {
+        let set = RegexSet::new(patterns)
+            .map_err(|e| AppError::Config(format!("invalid ignore pattern: {e}").into()))?;
+        Ok(Self { patterns: set })
+    }
+
+    pub fn is_ignored(&self, message: &str) -> bool {
+        self.patterns.is_match(message)
+    }
+}
+
+/// Filter entries by configured units, minimum priority level, and ignore patterns.
 /// Lower priority number = higher severity (0=emerg, 7=debug).
 /// Entries with priority <= max_priority pass the filter.
 pub fn filter_entries(
     mut entries: Vec<JournalEntry>,
     matcher: &UnitMatcher,
     max_priority: Priority,
+    ignore: Option<&IgnoreMatcher>,
 ) -> Vec<JournalEntry> {
     let max_level = max_priority.as_level();
-    entries.retain(|e| matcher.is_match(&e.unit) && e.priority <= max_level);
+    entries.retain(|e| {
+        matcher.is_match(&e.unit)
+            && e.priority <= max_level
+            && !ignore.is_some_and(|ig| ig.is_ignored(&e.message))
+    });
     entries
 }
 
@@ -81,7 +104,7 @@ mod tests {
             make_entry("sshd", 3, "error in sshd"),
         ];
         let m = matcher(&["nginx", "sshd"]);
-        let result = filter_entries(entries, &m, Priority::Err);
+        let result = filter_entries(entries, &m, Priority::Err, None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].unit, "nginx");
         assert_eq!(result[1].unit, "sshd");
@@ -95,7 +118,7 @@ mod tests {
             make_entry("nginx", 0, "emergency"),
         ];
         let m = matcher(&["nginx"]);
-        let result = filter_entries(entries, &m, Priority::Err);
+        let result = filter_entries(entries, &m, Priority::Err, None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].message, "error");
         assert_eq!(result[1].message, "emergency");
@@ -104,7 +127,7 @@ mod tests {
     #[test]
     fn empty_entries_returns_empty() {
         let m = matcher(&["nginx"]);
-        let result = filter_entries(vec![], &m, Priority::Err);
+        let result = filter_entries(vec![], &m, Priority::Err, None);
         assert!(result.is_empty());
     }
 
@@ -112,7 +135,7 @@ mod tests {
     fn no_matching_units_returns_empty() {
         let entries = vec![make_entry("postgres", 3, "error")];
         let m = matcher(&["nginx"]);
-        let result = filter_entries(entries, &m, Priority::Err);
+        let result = filter_entries(entries, &m, Priority::Err, None);
         assert!(result.is_empty());
     }
 
@@ -124,7 +147,7 @@ mod tests {
             make_entry("nginx", 3, "error"),
         ];
         let m = matcher(&["nginx"]);
-        let result = filter_entries(entries, &m, Priority::Err);
+        let result = filter_entries(entries, &m, Priority::Err, None);
         assert_eq!(result.len(), 3);
     }
 
@@ -195,10 +218,69 @@ mod tests {
             make_entry("sshd", 3, "sshd error"),
         ];
         let m = matcher(&["nginx", "web-.*"]);
-        let result = filter_entries(entries, &m, Priority::Err);
+        let result = filter_entries(entries, &m, Priority::Err, None);
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].unit, "web-frontend");
         assert_eq!(result[1].unit, "web-backend");
         assert_eq!(result[2].unit, "nginx");
+    }
+
+    #[test]
+    fn ignore_matcher_filters_matching_messages() {
+        let ig = IgnoreMatcher::new(&[
+            "Connection reset by peer".to_string(),
+        ])
+        .unwrap();
+        assert!(ig.is_ignored("Connection reset by peer"));
+        assert!(ig.is_ignored("blah Connection reset by peer blah"));
+        assert!(!ig.is_ignored("upstream timed out"));
+    }
+
+    #[test]
+    fn ignore_matcher_supports_regex() {
+        let ig = IgnoreMatcher::new(&[
+            "upstream timed out.*retrying".to_string(),
+        ])
+        .unwrap();
+        assert!(ig.is_ignored("upstream timed out, retrying"));
+        assert!(ig.is_ignored("upstream timed out (3 attempts), retrying"));
+        assert!(!ig.is_ignored("upstream timed out"));
+    }
+
+    #[test]
+    fn ignore_matcher_invalid_pattern() {
+        let result = IgnoreMatcher::new(&["[invalid".to_string()]);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("invalid ignore pattern"), "got: {err}");
+    }
+
+    #[test]
+    fn filter_entries_with_ignore() {
+        let entries = vec![
+            make_entry("nginx", 3, "upstream timed out"),
+            make_entry("nginx", 3, "Connection reset by peer"),
+            make_entry("nginx", 3, "segfault in worker"),
+        ];
+        let m = matcher(&["nginx"]);
+        let ig = IgnoreMatcher::new(&[
+            "Connection reset by peer".to_string(),
+        ])
+        .unwrap();
+        let result = filter_entries(entries, &m, Priority::Err, Some(&ig));
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].message, "upstream timed out");
+        assert_eq!(result[1].message, "segfault in worker");
+    }
+
+    #[test]
+    fn filter_entries_ignore_none_passes_all() {
+        let entries = vec![
+            make_entry("nginx", 3, "Connection reset by peer"),
+            make_entry("nginx", 3, "segfault"),
+        ];
+        let m = matcher(&["nginx"]);
+        let result = filter_entries(entries, &m, Priority::Err, None);
+        assert_eq!(result.len(), 2);
     }
 }

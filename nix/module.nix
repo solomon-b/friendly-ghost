@@ -9,6 +9,8 @@ let
     journal = {
       units = cfg.journal.units;
       priority = cfg.journal.priority;
+    } // lib.optionalAttrs (cfg.journal.ignorePatterns != []) {
+      ignore_patterns = cfg.journal.ignorePatterns;
     };
     email = {
       smtp_host = cfg.email.smtpHost;
@@ -53,6 +55,13 @@ in
         type = types.enum [ "emerg" "alert" "crit" "err" "warning" "notice" "info" "debug" ];
         default = "err";
         description = "Minimum priority level to report. Lower = more severe.";
+      };
+
+      ignorePatterns = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = "Regex patterns matched against log message text. Entries matching any pattern are dropped before analysis.";
+        example = [ "Connection reset by peer" "upstream timed out.*retrying" ];
       };
     };
 

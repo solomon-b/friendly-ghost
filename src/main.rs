@@ -61,8 +61,12 @@ fn run(cli: Cli) -> Result<(), AppError> {
                 journal::save_cursor(&cfg.state.cursor_file, &last.cursor)?;
             }
 
-            let entries =
-                filter::filter_entries(raw_entries, matcher, cfg.journal.priority);
+            let entries = filter::filter_entries(
+                raw_entries,
+                matcher,
+                cfg.journal.priority,
+                cfg.journal.ignore_matcher.as_ref(),
+            );
 
             if entries.is_empty() {
                 return Ok(());

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::error::AppError;
-use crate::filter::UnitMatcher;
+use crate::filter::{IgnoreMatcher, UnitMatcher};
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -17,8 +17,12 @@ pub struct Config {
 pub struct JournalConfig {
     pub units: Vec<String>,
     pub priority: Priority,
+    #[serde(default)]
+    pub ignore_patterns: Vec<String>,
     #[serde(skip)]
     pub unit_matcher: Option<UnitMatcher>,
+    #[serde(skip)]
+    pub ignore_matcher: Option<IgnoreMatcher>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -134,6 +138,10 @@ pub fn load(path: &Path, overrides: EnvOverrides) -> Result<Config, AppError> {
     }
 
     config.journal.unit_matcher = Some(UnitMatcher::new(&config.journal.units)?);
+    if !config.journal.ignore_patterns.is_empty() {
+        config.journal.ignore_matcher =
+            Some(IgnoreMatcher::new(&config.journal.ignore_patterns)?);
+    }
 
     if let Some(pw) = overrides.smtp_password {
         config.email.password = Some(pw);

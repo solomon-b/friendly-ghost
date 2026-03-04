@@ -19,6 +19,7 @@ Copy `config.example.toml` and edit:
 [journal]
 units = ["nginx", "sshd", "web-.*"]  # supports regex patterns
 priority = "err"  # emerg, alert, crit, err, warning, notice, info, debug
+ignore_patterns = ["Connection reset by peer"]  # optional, regex against message text
 
 [email]
 smtp_host = "mail.example.com"
@@ -63,6 +64,8 @@ export FRIENDLY_GHOST_LLM_API_KEY=your-key-here
 
 The system prompt file tells the LLM what to flag and what to ignore. It should instruct the LLM to respond with `NO_ISSUES` when everything is normal, or `SUBJECT: <summary>` followed by a detailed analysis when issues are found.
 
+Consider instructing the LLM to include a `Suggested filter:` line with a regex pattern for each finding. If the finding turns out to be a false alarm, you can copy the pattern into `ignore_patterns` to suppress it in future runs.
+
 Works with any OpenAI-compatible API: OpenAI, Claude, Gemini (via OpenAI compat endpoint), Ollama, OpenRouter, etc.
 
 ## NixOS Module
@@ -86,6 +89,7 @@ Add the flake to your inputs and import the module:
             journal = {
               units = [ "nginx" "sshd" "web-.*" ];
               priority = "err";
+              ignorePatterns = [ "Connection reset by peer" ];
             };
 
             email = {
