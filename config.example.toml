@@ -17,3 +17,15 @@ subject_prefix = "[friendly-ghost]"
 
 [state]
 cursor_file = "/var/lib/friendly-ghost/cursor"
+
+# Optional: LLM-based anomaly detection
+# When enabled, filtered log entries are sent to an OpenAI-compatible API
+# for analysis. The LLM writes the email body directly.
+# Set API key via environment variable: FRIENDLY_GHOST_LLM_API_KEY
+#
+# [llm]
+# api_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+# model = "gemini-2.5-flash"
+# system_prompt_file = "/etc/friendly-ghost/prompt.txt"
+# temperature = 0.1
+# max_tokens = 4096

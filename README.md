@@ -40,6 +40,31 @@ export FRIENDLY_GHOST_SMTP_PASSWORD=secret
 
 `FRIENDLY_GHOST_SMTP_HOST` can also override `smtp_host`.
 
+## LLM Analysis (optional)
+
+friendly-ghost can optionally send filtered log entries to an OpenAI-compatible LLM for anomaly detection. The LLM writes the email body as prose instead of the default plain-text format.
+
+Add an `[llm]` section to your config:
+
+```toml
+[llm]
+api_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+model = "gemini-2.5-flash"
+system_prompt_file = "/etc/friendly-ghost/prompt.txt"
+temperature = 0.1
+max_tokens = 4096
+```
+
+Set the API key via environment variable:
+
+```
+export FRIENDLY_GHOST_LLM_API_KEY=your-key-here
+```
+
+The system prompt file tells the LLM what to flag and what to ignore. It should instruct the LLM to respond with `NO_ISSUES` when everything is normal, or `SUBJECT: <summary>` followed by a detailed analysis when issues are found.
+
+Works with any OpenAI-compatible API: OpenAI, Claude, Gemini (via OpenAI compat endpoint), Ollama, OpenRouter, etc.
+
 ## NixOS Module
 
 Add the flake to your inputs and import the module:
@@ -93,6 +118,7 @@ The environment file should contain secrets:
 
 ```
 FRIENDLY_GHOST_SMTP_PASSWORD=secret
+FRIENDLY_GHOST_LLM_API_KEY=your-key-here
 ```
 
 The module creates a systemd timer and service with `DynamicUser`, `StateDirectory`, and journal read access handled automatically.

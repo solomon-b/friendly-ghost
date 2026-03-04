@@ -26,4 +26,7 @@ pub enum AppError {
 
     #[error("email error: {0}")]
     Email(Cow<'static, str>),
+
+    #[error("llm error: {0}")]
+    Llm(Cow<'static, str>),
 }

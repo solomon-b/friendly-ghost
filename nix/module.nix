@@ -5,7 +5,7 @@ let
   cfg = config.services.friendly-ghost;
   inherit (lib) mkEnableOption mkOption mkIf types;
 
-  configFile = (pkgs.formats.toml {}).generate "friendly-ghost.toml" {
+  configFile = (pkgs.formats.toml {}).generate "friendly-ghost.toml" ({
     journal = {
       units = cfg.journal.units;
       priority = cfg.journal.priority;
@@ -21,7 +21,15 @@ let
     state = {
       cursor_file = "/var/lib/friendly-ghost/cursor";
     };
-  };
+  } // lib.optionalAttrs cfg.llm.enable {
+    llm = {
+      api_url = cfg.llm.apiUrl;
+      model = cfg.llm.model;
+      system_prompt_file = cfg.llm.systemPromptFile;
+      temperature = cfg.llm.temperature;
+      max_tokens = cfg.llm.maxTokens;
+    };
+  });
 in
 {
   options.services.friendly-ghost = {
@@ -88,8 +96,42 @@ in
     environmentFile = mkOption {
       type = types.nullOr types.path;
       default = null;
-      description = "Path to environment file containing FRIENDLY_GHOST_SMTP_PASSWORD.";
+      description = "Path to environment file containing FRIENDLY_GHOST_SMTP_PASSWORD and optionally FRIENDLY_GHOST_LLM_API_KEY.";
       example = "/run/secrets/friendly-ghost.env";
+    };
+
+    llm = {
+      enable = mkEnableOption "LLM-based anomaly detection";
+
+      apiUrl = mkOption {
+        type = types.str;
+        description = "OpenAI-compatible chat completions API URL.";
+        example = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+      };
+
+      model = mkOption {
+        type = types.str;
+        description = "Model name to use.";
+        example = "gemini-2.5-flash";
+      };
+
+      systemPromptFile = mkOption {
+        type = types.path;
+        description = "Path to the system prompt file.";
+        example = "/etc/friendly-ghost/prompt.txt";
+      };
+
+      temperature = mkOption {
+        type = types.float;
+        default = 0.1;
+        description = "Sampling temperature for LLM responses.";
+      };
+
+      maxTokens = mkOption {
+        type = types.int;
+        default = 4096;
+        description = "Maximum tokens in LLM response.";
+      };
     };
   };
 

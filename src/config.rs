@@ -10,6 +10,7 @@ pub struct Config {
     pub journal: JournalConfig,
     pub email: EmailConfig,
     pub state: StateConfig,
+    pub llm: Option<LlmConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,6 +36,19 @@ pub struct EmailConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct StateConfig {
     pub cursor_file: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LlmConfig {
+    pub api_url: String,
+    pub model: String,
+    pub system_prompt_file: PathBuf,
+    pub temperature: f64,
+    pub max_tokens: u32,
+    #[serde(skip)]
+    pub api_key: Option<String>,
+    #[serde(skip)]
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -87,6 +101,7 @@ impl Priority {
 pub struct EnvOverrides {
     pub smtp_password: Option<String>,
     pub smtp_host: Option<String>,
+    pub llm_api_key: Option<String>,
 }
 
 impl EnvOverrides {
@@ -94,6 +109,7 @@ impl EnvOverrides {
         Self {
             smtp_password: std::env::var("FRIENDLY_GHOST_SMTP_PASSWORD").ok(),
             smtp_host: std::env::var("FRIENDLY_GHOST_SMTP_HOST").ok(),
+            llm_api_key: std::env::var("FRIENDLY_GHOST_LLM_API_KEY").ok(),
         }
     }
 }
@@ -124,6 +140,18 @@ pub fn load(path: &Path, overrides: EnvOverrides) -> Result<Config, AppError> {
     }
     if let Some(host) = overrides.smtp_host {
         config.email.smtp_host = host;
+    }
+
+    if let Some(ref mut llm) = config.llm {
+        llm.api_key = overrides.llm_api_key;
+
+        let prompt = std::fs::read_to_string(&llm.system_prompt_file).map_err(|e| {
+            AppError::Config(
+                format!("failed to read system prompt file {:?}: {e}", llm.system_prompt_file)
+                    .into(),
+            )
+        })?;
+        llm.system_prompt = Some(prompt);
     }
 
     Ok(config)
@@ -157,6 +185,7 @@ cursor_file = "/tmp/friendly-ghost-cursor"
         EnvOverrides {
             smtp_password: None,
             smtp_host: None,
+            llm_api_key: None,
         }
     }
 
@@ -244,6 +273,7 @@ cursor_file = "/tmp/friendly-ghost-cursor"
         let overrides = EnvOverrides {
             smtp_password: Some("secret123".to_string()),
             smtp_host: None,
+            llm_api_key: None,
         };
         let config = load(tmp.path(), overrides).unwrap();
         assert_eq!(config.email.password, Some("secret123".to_string()));
@@ -256,6 +286,7 @@ cursor_file = "/tmp/friendly-ghost-cursor"
         let overrides = EnvOverrides {
             smtp_password: None,
             smtp_host: Some("override.example.com".to_string()),
+            llm_api_key: None,
         };
         let config = load(tmp.path(), overrides).unwrap();
         assert_eq!(config.email.smtp_host, "override.example.com");
@@ -297,5 +328,68 @@ cursor_file = "/tmp/friendly-ghost-cursor"
         assert!(matcher.is_match("nginx"));
         assert!(matcher.is_match("web-frontend"));
         assert!(!matcher.is_match("sshd"));
+    }
+
+    #[test]
+    fn parses_config_with_llm_section() {
+        let prompt_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(prompt_file.path(), "You are a watchdog.").unwrap();
+
+        let with_llm = format!(
+            r#"{}
+[llm]
+api_url = "https://api.example.com/v1/chat/completions"
+model = "gpt-4"
+system_prompt_file = {:?}
+temperature = 0.1
+max_tokens = 4096
+"#,
+            sample_toml(),
+            prompt_file.path()
+        );
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(with_llm.as_bytes()).unwrap();
+        let config = load(tmp.path(), no_overrides()).unwrap();
+        let llm = config.llm.unwrap();
+        assert_eq!(llm.model, "gpt-4");
+        assert_eq!(llm.temperature, 0.1);
+        assert_eq!(llm.max_tokens, 4096);
+        assert_eq!(llm.system_prompt.unwrap(), "You are a watchdog.");
+    }
+
+    #[test]
+    fn parses_config_without_llm_section() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(sample_toml().as_bytes()).unwrap();
+        let config = load(tmp.path(), no_overrides()).unwrap();
+        assert!(config.llm.is_none());
+    }
+
+    #[test]
+    fn override_llm_api_key() {
+        let prompt_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(prompt_file.path(), "prompt").unwrap();
+
+        let with_llm = format!(
+            r#"{}
+[llm]
+api_url = "https://api.example.com/v1/chat/completions"
+model = "gpt-4"
+system_prompt_file = {:?}
+temperature = 0.1
+max_tokens = 4096
+"#,
+            sample_toml(),
+            prompt_file.path()
+        );
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(with_llm.as_bytes()).unwrap();
+        let overrides = EnvOverrides {
+            smtp_password: None,
+            smtp_host: None,
+            llm_api_key: Some("sk-test-key".to_string()),
+        };
+        let config = load(tmp.path(), overrides).unwrap();
+        assert_eq!(config.llm.unwrap().api_key, Some("sk-test-key".to_string()));
     }
 }

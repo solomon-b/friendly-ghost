@@ -3,6 +3,7 @@ mod email;
 mod error;
 mod filter;
 mod journal;
+mod llm;
 mod report;
 
 use std::path::PathBuf;
@@ -63,18 +64,38 @@ fn run(cli: Cli) -> Result<(), AppError> {
             let entries =
                 filter::filter_entries(raw_entries, matcher, cfg.journal.priority);
 
-            if !entries.is_empty() {
-                let hostname = hostname();
-                let body = report::format_report(&entries, &hostname);
-                let subject =
-                    report::format_subject(&cfg.email.subject_prefix, entries.len(), &hostname);
+            if entries.is_empty() {
+                return Ok(());
+            }
 
-                if cli.dry_run {
-                    println!("{subject}\n\n{body}");
-                } else {
-                    email::send_report(cfg.email, subject, body)?;
-                    eprintln!("sent alert with {} entries", entries.len());
+            let hostname = hostname();
+
+            let (subject, body) = match &cfg.llm {
+                Some(llm_config) => {
+                    match llm::analyze(&entries, &hostname, llm_config)? {
+                        llm::LlmVerdict::NoIssues => {
+                            eprintln!("LLM analysis: no issues found");
+                            return Ok(());
+                        }
+                        llm::LlmVerdict::Alert { subject, body } => (subject, body),
+                    }
                 }
+                None => {
+                    let body = report::format_report(&entries, &hostname);
+                    let subject = report::format_subject(
+                        &cfg.email.subject_prefix,
+                        entries.len(),
+                        &hostname,
+                    );
+                    (subject, body)
+                }
+            };
+
+            if cli.dry_run {
+                println!("{subject}\n\n{body}");
+            } else {
+                email::send_report(cfg.email, subject, body)?;
+                eprintln!("sent alert with {} entries", entries.len());
             }
         }
     }
