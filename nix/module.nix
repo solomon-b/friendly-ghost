@@ -27,9 +27,10 @@ let
     llm = {
       api_url = cfg.llm.apiUrl;
       model = cfg.llm.model;
-      system_prompt_file = cfg.llm.systemPromptFile;
       temperature = cfg.llm.temperature;
       max_tokens = cfg.llm.maxTokens;
+    } // lib.optionalAttrs (cfg.llm.systemPromptFile != null) {
+      system_prompt_file = cfg.llm.systemPromptFile;
     };
   });
 in
@@ -132,8 +133,9 @@ in
       };
 
       systemPromptFile = mkOption {
-        type = types.path;
-        description = "Path to the system prompt file.";
+        type = types.nullOr types.path;
+        default = null;
+        description = "Path to a file with additional instructions appended to the built-in system prompt. Optional.";
         example = "/etc/friendly-ghost/prompt.txt";
       };
 

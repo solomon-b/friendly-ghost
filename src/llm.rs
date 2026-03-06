@@ -4,6 +4,34 @@ use crate::config::LlmConfig;
 use crate::error::AppError;
 use crate::filter::JournalEntry;
 
+/// Built-in system prompt that defines the LLM's role and response format.
+/// Users can append additional context via `system_prompt_file` in config.
+pub const BASE_SYSTEM_PROMPT: &str = r#"You are a server monitoring assistant for friendly-ghost. You receive batches of systemd journal log entries and decide whether they require human attention.
+
+DO NOT alert on:
+- Routine bot/scanner probes (random PHP paths, wp-login, .env, etc.)
+- Normal service lifecycle events (started, stopped, reloaded)
+- Transient network issues that self-resolve (single connection reset, brief DNS timeout)
+- Log entries that are informational or expected during normal operation
+
+DO alert on:
+- Service crashes, unexpected exits, or repeated restart loops
+- Resource exhaustion (disk full, OOM kills, file descriptor limits)
+- Evidence of unauthorized access or successful exploitation
+- Persistent errors that indicate a degraded service (repeated upstream failures, sustained database errors)
+- Security-relevant events (failed auth brute force, certificate expiry, privilege escalation)
+
+Response format — you MUST use exactly one of these:
+
+1. If nothing requires attention, respond with exactly:
+NO_ISSUES
+
+2. If something requires attention, respond with:
+SUBJECT: <short summary for email subject line>
+<body explaining the issue, affected service, relevant log lines, and suggested action>
+
+If you see recurring noise that is not actionable, suggest an `ignore_patterns` regex the operator could add to filter it out in the future."#;
+
 /// The verdict returned by the LLM after analyzing journal entries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LlmVerdict {
@@ -66,11 +94,6 @@ pub fn analyze(
         .as_deref()
         .ok_or_else(|| AppError::Llm("LLM API key is not configured".into()))?;
 
-    let system_prompt = config
-        .system_prompt
-        .as_deref()
-        .ok_or_else(|| AppError::Llm("LLM system prompt is not configured".into()))?;
-
     let user_message = format_user_message(entries);
 
     let payload = serde_json::json!({
@@ -78,7 +101,7 @@ pub fn analyze(
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
         "messages": [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": config.system_prompt},
             {"role": "user", "content": user_message},
         ],
     });

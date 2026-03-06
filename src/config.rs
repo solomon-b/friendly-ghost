@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use crate::error::AppError;
 use crate::filter::{IgnoreMatcher, UnitMatcher};
+use crate::llm::BASE_SYSTEM_PROMPT;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -42,17 +43,21 @@ pub struct StateConfig {
     pub cursor_file: PathBuf,
 }
 
+fn default_system_prompt() -> String {
+    BASE_SYSTEM_PROMPT.to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct LlmConfig {
     pub api_url: String,
     pub model: String,
-    pub system_prompt_file: PathBuf,
+    pub system_prompt_file: Option<PathBuf>,
     pub temperature: f64,
     pub max_tokens: u32,
     #[serde(skip)]
     pub api_key: Option<String>,
-    #[serde(skip)]
-    pub system_prompt: Option<String>,
+    #[serde(skip, default = "default_system_prompt")]
+    pub system_prompt: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -153,13 +158,17 @@ pub fn load(path: &Path, overrides: EnvOverrides) -> Result<Config, AppError> {
     if let Some(ref mut llm) = config.llm {
         llm.api_key = overrides.llm_api_key;
 
-        let prompt = std::fs::read_to_string(&llm.system_prompt_file).map_err(|e| {
-            AppError::Config(
-                format!("failed to read system prompt file {:?}: {e}", llm.system_prompt_file)
-                    .into(),
-            )
-        })?;
-        llm.system_prompt = Some(prompt);
+        let mut prompt = BASE_SYSTEM_PROMPT.to_string();
+        if let Some(ref path) = llm.system_prompt_file {
+            let addendum = std::fs::read_to_string(path).map_err(|e| {
+                AppError::Config(
+                    format!("failed to read system prompt file {path:?}: {e}").into(),
+                )
+            })?;
+            prompt.push_str("\n\nAdditional operator instructions:\n");
+            prompt.push_str(&addendum);
+        }
+        llm.system_prompt = prompt;
     }
 
     Ok(config)
@@ -339,7 +348,42 @@ cursor_file = "/tmp/friendly-ghost-cursor"
     }
 
     #[test]
-    fn parses_config_with_llm_section() {
+    fn parses_config_with_llm_section_no_prompt_file() {
+        let with_llm = format!(
+            r#"{}
+[llm]
+api_url = "https://api.example.com/v1/chat/completions"
+model = "gpt-4"
+temperature = 0.1
+max_tokens = 4096
+"#,
+            sample_toml(),
+        );
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(with_llm.as_bytes()).unwrap();
+        let config = load(tmp.path(), no_overrides()).unwrap();
+        let llm = config.llm.unwrap();
+        assert_eq!(llm.model, "gpt-4");
+        assert_eq!(llm.temperature, 0.1);
+        assert_eq!(llm.max_tokens, 4096);
+        assert_eq!(llm.system_prompt, BASE_SYSTEM_PROMPT);
+    }
+
+    #[test]
+    fn llm_config_deserializes_with_base_prompt_default() {
+        let toml_str = r#"
+api_url = "https://api.example.com/v1/chat/completions"
+model = "gpt-4"
+temperature = 0.1
+max_tokens = 4096
+"#;
+        let llm: LlmConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(llm.system_prompt, BASE_SYSTEM_PROMPT);
+        assert!(llm.system_prompt_file.is_none());
+    }
+
+    #[test]
+    fn parses_config_with_llm_prompt_file_appends() {
         let prompt_file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(prompt_file.path(), "You are a watchdog.").unwrap();
 
@@ -359,10 +403,9 @@ max_tokens = 4096
         tmp.write_all(with_llm.as_bytes()).unwrap();
         let config = load(tmp.path(), no_overrides()).unwrap();
         let llm = config.llm.unwrap();
-        assert_eq!(llm.model, "gpt-4");
-        assert_eq!(llm.temperature, 0.1);
-        assert_eq!(llm.max_tokens, 4096);
-        assert_eq!(llm.system_prompt.unwrap(), "You are a watchdog.");
+        assert!(llm.system_prompt.starts_with(BASE_SYSTEM_PROMPT));
+        assert!(llm.system_prompt.contains("Additional operator instructions:"));
+        assert!(llm.system_prompt.contains("You are a watchdog."));
     }
 
     #[test]
@@ -375,20 +418,15 @@ max_tokens = 4096
 
     #[test]
     fn override_llm_api_key() {
-        let prompt_file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(prompt_file.path(), "prompt").unwrap();
-
         let with_llm = format!(
             r#"{}
 [llm]
 api_url = "https://api.example.com/v1/chat/completions"
 model = "gpt-4"
-system_prompt_file = {:?}
 temperature = 0.1
 max_tokens = 4096
 "#,
             sample_toml(),
-            prompt_file.path()
         );
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(with_llm.as_bytes()).unwrap();

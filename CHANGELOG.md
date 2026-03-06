@@ -19,6 +19,7 @@
 - NixOS module: `email.passwordFile` and `llm.apiKeyFile` options for per-secret file support. Compatible with sops-nix, agenix, and similar file-based secret managers. The service uses a wrapper script to read secret files into environment variables at startup.
 - Optional LLM-based anomaly detection via OpenAI-compatible API. Filtered entries are sent to the LLM which writes the email body as prose. Responds `NO_ISSUES` to suppress email. Configured via `[llm]` TOML section and `FRIENDLY_GHOST_LLM_API_KEY` env var.
 - `ignore_patterns` option in `[journal]` config: regex patterns matched against log message text. Entries matching any pattern are dropped before LLM analysis or plain-text report generation. Useful for suppressing known false alarms.
+- Built-in base system prompt for LLM analysis. Covers role definition, alert/ignore heuristics, and response format (`NO_ISSUES` / `SUBJECT:` + body). `system_prompt_file` is now optional — when provided, its contents are appended as additional operator instructions.
 
 ### Changed
 
