@@ -78,17 +78,43 @@ pub fn query_journal(cursor: Option<&str>) -> Result<JournalResult, AppError> {
                 .map_err(|e| AppError::Journal(format!("failed to advance past cursor: {e}").into()))?;
         }
         None => {
-            // First run: seek to tail to establish baseline
-            j.seek_tail()
-                .map_err(|e| AppError::Journal(format!("failed to seek to tail: {e}").into()))?;
-            // Must call previous() to position on an actual entry after seek_tail
-            if j.previous()
+            // First run: seek near the tail to establish baseline.
+            //
+            // We avoid seek_tail() + previous() because it returns 0 on real
+            // systems where the journal spans multiple files (persistent +
+            // runtime + per-service). This is a long-standing libsystemd bug:
+            //   https://github.com/systemd/systemd/issues/9934
+            //   https://github.com/systemd/systemd/issues/17662
+            //
+            // Instead, seek to 1 second ago via realtime timestamp, then call
+            // previous() to land on the latest entry at or before that point.
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let one_sec_ago = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock before epoch")
+                .as_micros() as u64
+                - 1_000_000;
+
+            j.seek_realtime_usec(one_sec_ago)
+                .map_err(|e| AppError::Journal(format!("failed to seek to recent time: {e}").into()))?;
+
+            match j.previous()
                 .map_err(|e| AppError::Journal(format!("failed to seek previous: {e}").into()))?
-                == 0
             {
-                // Empty journal — no cursor to save
-                return Ok(JournalResult::FirstRun(None));
+                0 => {
+                    // Nothing in the last second — fall back to seek_tail
+                    j.seek_tail()
+                        .map_err(|e| AppError::Journal(format!("failed to seek tail: {e}").into()))?;
+                    match j.previous()
+                        .map_err(|e| AppError::Journal(format!("failed to get previous: {e}").into()))?
+                    {
+                        0 => return Ok(JournalResult::FirstRun(None)),
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
+
             let tail_cursor = j
                 .cursor()
                 .map_err(|e| AppError::Journal(format!("failed to get cursor: {e}").into()))?;

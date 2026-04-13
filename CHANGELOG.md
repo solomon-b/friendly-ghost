@@ -21,6 +21,10 @@
 - `ignore_patterns` option in `[journal]` config: regex patterns matched against log message text. Entries matching any pattern are dropped before LLM analysis or plain-text report generation. Useful for suppressing known false alarms.
 - Built-in base system prompt for LLM analysis. Covers role definition, alert/ignore heuristics, and response format (`NO_ISSUES` / `SUBJECT:` + body). `system_prompt_file` is now optional — when provided, its contents are appended as additional operator instructions.
 
+### Fixed
+
+- First-run journal detection on real systems with multiple journal files. `seek_tail()` + `previous()` returned 0 due to a long-standing libsystemd bug ([systemd#9934](https://github.com/systemd/systemd/issues/9934), [systemd#17662](https://github.com/systemd/systemd/issues/17662)). Replaced with `seek_realtime_usec` to a recent timestamp, with `seek_tail` as fallback.
+
 ### Changed
 
 - Error variants (`Config`, `Journal`, `Email`) wrap `Cow<'static, str>` instead of `String`. Static error messages avoid heap allocation.
