@@ -24,6 +24,7 @@
 ### Fixed
 
 - First-run journal detection on real systems with multiple journal files. `seek_tail()` + `previous()` returned 0 due to a long-standing libsystemd bug ([systemd#9934](https://github.com/systemd/systemd/issues/9934), [systemd#17662](https://github.com/systemd/systemd/issues/17662)). Replaced with `seek_realtime_usec` to a recent timestamp, with `seek_tail` as fallback.
+- Pin `psm` to 0.1.27 to support Rust versions older than 1.87 (e.g. nixos-25.05). `psm` 0.1.28+ pulls in `ar_archive_writer` which uses `if let` chains, stabilized in Rust 1.87.
 
 ### Changed
 
