@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::process::Command;
 
 use crate::error::AppError;
 use crate::filter::JournalEntry;
@@ -12,233 +13,115 @@ pub enum JournalResult {
     Entries(Vec<JournalEntry>),
 }
 
-/// Read the saved cursor from disk. Returns None if file doesn't exist.
-pub fn read_cursor(path: &Path) -> Result<Option<String>, AppError> {
-    match std::fs::read_to_string(path) {
-        Ok(mut content) => {
-            let end = content.trim_end().len();
-            content.truncate(end);
-            let start = content.len() - content.trim_start().len();
-            if start > 0 {
-                content.drain(..start);
-            }
-            if content.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(content))
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(AppError::CursorFile {
-            path: path.to_owned(),
-            source: e,
-        }),
-    }
-}
-
-/// Save the cursor to disk atomically (write tmp + rename).
-pub fn save_cursor(path: &Path, cursor: &str) -> Result<(), AppError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError::CursorFile {
-            path: path.to_owned(),
-            source: e,
-        })?;
-    }
-    let tmp_path = path.with_extension("tmp");
-    std::fs::write(&tmp_path, cursor).map_err(|e| AppError::CursorFile {
-        path: tmp_path.clone(),
-        source: e,
-    })?;
-    std::fs::rename(&tmp_path, path).map_err(|e| AppError::CursorFile {
-        path: path.to_owned(),
-        source: e,
-    })?;
-    Ok(())
-}
-
-/// Query the systemd journal for entries since the given cursor.
-/// If cursor is None (first run), seeks to the tail and returns `FirstRun`
-/// with the baseline cursor position for the next run.
+/// Query the systemd journal for entries using a journalctl subprocess.
 ///
-/// Reads all entries since the cursor; the caller filters via `filter_entries`.
-pub fn query_journal(cursor: Option<&str>) -> Result<JournalResult, AppError> {
-    use systemd::journal;
+/// Uses `--cursor-file` for cursor management:
+/// - First run (no cursor file): establishes baseline with `journalctl -n 0`
+/// - Subsequent runs: reads all entries since last cursor with `journalctl --output=json`
+pub fn query_journal(cursor_file: &Path) -> Result<JournalResult, AppError> {
+    let first_run = !cursor_file.exists();
 
-    let debug = std::env::var("FRIENDLY_GHOST_DEBUG").as_deref() == Ok("1");
-
-    let mut j = journal::OpenOptions::default()
-        .system(true)
-        .open()
-        .map_err(|e| AppError::Journal(format!("failed to open journal: {e}").into()))?;
-
-    if debug {
-        eprintln!("[debug] journal::open() succeeded");
-    }
-
-    match cursor {
-        Some(c) => {
-            let seek_res = j.seek_cursor(c);
-            if debug {
-                eprintln!("[debug] seek_cursor({c:?}) = {seek_res:?}");
-            }
-            seek_res
-                .map_err(|e| AppError::Journal(format!("failed to seek to cursor: {e}").into()))?;
-            // After seek, advance past the entry at the cursor (already reported)
-            let next_res = j.next();
-            if debug {
-                eprintln!("[debug] next() after seek_cursor = {next_res:?}");
-            }
-            next_res
-                .map_err(|e| AppError::Journal(format!("failed to advance past cursor: {e}").into()))?;
+    if first_run {
+        if let Some(parent) = cursor_file.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| AppError::CursorFile {
+                path: cursor_file.to_owned(),
+                source: e,
+            })?;
         }
-        None => {
-            // First run: seek near the tail to establish baseline.
-            //
-            // We avoid seek_tail() + previous() because it returns 0 on real
-            // systems where the journal spans multiple files (persistent +
-            // runtime + per-service). This is a long-standing libsystemd bug:
-            //   https://github.com/systemd/systemd/issues/9934
-            //   https://github.com/systemd/systemd/issues/17662
-            //
-            // Instead, seek to 1 second ago via realtime timestamp, then call
-            // previous() to land on the latest entry at or before that point.
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let one_sec_ago = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system clock before epoch")
-                .as_micros() as u64
-                - 1_000_000;
 
-            if debug {
-                eprintln!("[debug] one_sec_ago = {one_sec_ago}");
-            }
+        let output = Command::new("journalctl")
+            .args(["-n", "0", "--output", "cat"])
+            .arg("--cursor-file")
+            .arg(cursor_file)
+            .output()
+            .map_err(|e| AppError::Journal(format!("failed to run journalctl: {e}").into()))?;
 
-            let seek_rt_res = j.seek_realtime_usec(one_sec_ago);
-            if debug {
-                eprintln!("[debug] seek_realtime_usec({one_sec_ago}) = {seek_rt_res:?}");
-            }
-            seek_rt_res
-                .map_err(|e| AppError::Journal(format!("failed to seek to recent time: {e}").into()))?;
-
-            let prev_res = j.previous();
-            if debug {
-                eprintln!("[debug] previous() after seek_realtime_usec = {prev_res:?}");
-            }
-            match prev_res
-                .map_err(|e| AppError::Journal(format!("failed to seek previous: {e}").into()))?
-            {
-                0 => {
-                    if debug {
-                        eprintln!("[debug] previous() returned 0 after seek_realtime_usec, falling back to seek_tail");
-                    }
-                    // Nothing in the last second — fall back to seek_tail
-                    let seek_tail_res = j.seek_tail();
-                    if debug {
-                        eprintln!("[debug] seek_tail() = {seek_tail_res:?}");
-                    }
-                    seek_tail_res
-                        .map_err(|e| AppError::Journal(format!("failed to seek tail: {e}").into()))?;
-                    let prev2_res = j.previous();
-                    if debug {
-                        eprintln!("[debug] previous() after seek_tail = {prev2_res:?}");
-                    }
-                    match prev2_res
-                        .map_err(|e| AppError::Journal(format!("failed to get previous: {e}").into()))?
-                    {
-                        0 => {
-                            if debug {
-                                eprintln!("[debug] previous() after seek_tail also returned 0");
-                                eprintln!("[debug] --- diagnostic experiments ---");
-
-                                // Experiment 1: j.next() with no prior seek
-                                let exp1 = j.next();
-                                eprintln!("[debug] experiment 1: j.next() (no seek) = {exp1:?}");
-
-                                // Experiment 2: seek_realtime_usec(0) then next()
-                                let exp2a = j.seek_realtime_usec(0);
-                                eprintln!("[debug] experiment 2: seek_realtime_usec(0) = {exp2a:?}");
-                                let exp2b = j.next();
-                                eprintln!("[debug] experiment 2: j.next() after seek(0) = {exp2b:?}");
-
-                                // Experiment 3: seek_head() then next()
-                                let exp3a = j.seek_head();
-                                eprintln!("[debug] experiment 3: seek_head() = {exp3a:?}");
-                                let exp3b = j.next();
-                                eprintln!("[debug] experiment 3: j.next() after seek_head = {exp3b:?}");
-
-                                eprintln!("[debug] --- end experiments ---");
-                            }
-                            return Ok(JournalResult::FirstRun(None));
-                        }
-                        _ => {}
-                    }
-                }
-                n => {
-                    if debug {
-                        eprintln!("[debug] previous() after seek_realtime_usec returned {n}");
-                    }
-                }
-            }
-
-            let tail_cursor = j
-                .cursor()
-                .map_err(|e| AppError::Journal(format!("failed to get cursor: {e}").into()))?;
-            if debug {
-                eprintln!("[debug] tail cursor = {tail_cursor:?}");
-            }
-            return Ok(JournalResult::FirstRun(Some(tail_cursor)));
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::Journal(
+                format!("journalctl failed: {stderr}").into(),
+            ));
         }
-    }
 
+        if cursor_file.exists() {
+            Ok(JournalResult::FirstRun(Some("baseline".to_string())))
+        } else {
+            Ok(JournalResult::FirstRun(None))
+        }
+    } else {
+        let output = Command::new("journalctl")
+            .args(["--output", "json"])
+            .arg("--cursor-file")
+            .arg(cursor_file)
+            .output()
+            .map_err(|e| AppError::Journal(format!("failed to run journalctl: {e}").into()))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::Journal(
+                format!("journalctl failed: {stderr}").into(),
+            ));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let entries = parse_journal_json(&stdout)?;
+        Ok(JournalResult::Entries(entries))
+    }
+}
+
+/// Parse journalctl JSON output (one JSON object per line) into JournalEntry structs.
+fn parse_journal_json(output: &str) -> Result<Vec<JournalEntry>, AppError> {
     let mut entries = Vec::new();
-    let mut entry_count = 0u64;
-    loop {
-        let entry_res = j
-            .next_entry()
-            .map_err(|e| AppError::Journal(format!("failed to read journal entry: {e}").into()))?;
-        match entry_res {
-            None => {
-                if debug {
-                    eprintln!("[debug] next_entry() returned None after {entry_count} entries");
-                }
-                break;
-            }
-            Some(mut record) => {
-                entry_count += 1;
-                if debug && entry_count <= 3 {
-                    eprintln!("[debug] next_entry() returned entry #{entry_count}");
-                }
-                let timestamp = record
-                    .remove("_SOURCE_REALTIME_TIMESTAMP")
-                    .or_else(|| record.remove("__REALTIME_TIMESTAMP"))
-                    .unwrap_or_default();
-                let mut unit = record
-                    .remove("_SYSTEMD_UNIT")
-                    .unwrap_or_default();
-                if unit.ends_with(".service") {
-                    unit.truncate(unit.len() - ".service".len());
-                }
-                let priority = record
-                    .get("PRIORITY")
-                    .and_then(|p| p.parse::<u8>().ok())
-                    .unwrap_or(6);
-                let message = record.remove("MESSAGE").unwrap_or_default();
-                let entry_cursor = j
-                    .cursor()
-                    .map_err(|e| AppError::Journal(format!("failed to get cursor: {e}").into()))?;
-
-                entries.push(JournalEntry {
-                    timestamp,
-                    unit,
-                    priority,
-                    message,
-                    cursor: entry_cursor,
-                });
-            }
+    for line in output.lines() {
+        if line.trim().is_empty() {
+            continue;
         }
-    }
+        let obj: serde_json::Value = serde_json::from_str(line)
+            .map_err(|e| AppError::Journal(format!("failed to parse journal JSON: {e}").into()))?;
 
-    Ok(JournalResult::Entries(entries))
+        let timestamp = obj
+            .get("_SOURCE_REALTIME_TIMESTAMP")
+            .or_else(|| obj.get("__REALTIME_TIMESTAMP"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        let mut unit = obj
+            .get("_SYSTEMD_UNIT")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if unit.ends_with(".service") {
+            unit.truncate(unit.len() - ".service".len());
+        }
+
+        let priority = obj
+            .get("PRIORITY")
+            .and_then(|v| v.as_str())
+            .and_then(|p| p.parse::<u8>().ok())
+            .unwrap_or(6);
+
+        let message = obj
+            .get("MESSAGE")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        let cursor = obj
+            .get("__CURSOR")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        entries.push(JournalEntry {
+            timestamp,
+            unit,
+            priority,
+            message,
+            cursor,
+        });
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -246,25 +129,75 @@ mod tests {
     use super::*;
 
     #[test]
-    fn read_cursor_missing_file() {
-        let result = read_cursor(Path::new("/tmp/nonexistent-friendly-ghost-cursor"));
-        assert!(result.unwrap().is_none());
+    fn parse_single_entry() {
+        let json = r#"{"_SYSTEMD_UNIT":"nginx.service","PRIORITY":"3","MESSAGE":"segfault","_SOURCE_REALTIME_TIMESTAMP":"1776103665598487","__CURSOR":"s=abc123"}"#;
+        let entries = parse_journal_json(json).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].unit, "nginx");
+        assert_eq!(entries[0].priority, 3);
+        assert_eq!(entries[0].message, "segfault");
+        assert_eq!(entries[0].timestamp, "1776103665598487");
+        assert_eq!(entries[0].cursor, "s=abc123");
     }
 
     #[test]
-    fn cursor_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cursor");
-        save_cursor(&path, "s=abc123;i=42").unwrap();
-        let loaded = read_cursor(&path).unwrap();
-        assert_eq!(loaded, Some("s=abc123;i=42".to_string()));
+    fn parse_strips_service_suffix() {
+        let json = r#"{"_SYSTEMD_UNIT":"kpbj-web.service","PRIORITY":"6","MESSAGE":"ok","__REALTIME_TIMESTAMP":"123","__CURSOR":"c1"}"#;
+        let entries = parse_journal_json(json).unwrap();
+        assert_eq!(entries[0].unit, "kpbj-web");
     }
 
     #[test]
-    fn read_cursor_empty_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cursor");
-        std::fs::write(&path, "  \n").unwrap();
-        assert!(read_cursor(&path).unwrap().is_none());
+    fn parse_falls_back_to_realtime_timestamp() {
+        let json = r#"{"_SYSTEMD_UNIT":"app.service","PRIORITY":"4","MESSAGE":"warn","__REALTIME_TIMESTAMP":"999","__CURSOR":"c2"}"#;
+        let entries = parse_journal_json(json).unwrap();
+        assert_eq!(entries[0].timestamp, "999");
+    }
+
+    #[test]
+    fn parse_prefers_source_realtime_timestamp() {
+        let json = r#"{"PRIORITY":"6","MESSAGE":"msg","_SOURCE_REALTIME_TIMESTAMP":"111","__REALTIME_TIMESTAMP":"222","__CURSOR":"c"}"#;
+        let entries = parse_journal_json(json).unwrap();
+        assert_eq!(entries[0].timestamp, "111");
+    }
+
+    #[test]
+    fn parse_multiple_lines() {
+        let json = r#"{"_SYSTEMD_UNIT":"a.service","PRIORITY":"3","MESSAGE":"err1","__REALTIME_TIMESTAMP":"1","__CURSOR":"c1"}
+{"_SYSTEMD_UNIT":"b.service","PRIORITY":"4","MESSAGE":"warn1","__REALTIME_TIMESTAMP":"2","__CURSOR":"c2"}"#;
+        let entries = parse_journal_json(json).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].unit, "a");
+        assert_eq!(entries[1].unit, "b");
+    }
+
+    #[test]
+    fn parse_empty_output() {
+        let entries = parse_journal_json("").unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_missing_fields_uses_defaults() {
+        let json = r#"{"MESSAGE":"bare message","__CURSOR":"c3"}"#;
+        let entries = parse_journal_json(json).unwrap();
+        assert_eq!(entries[0].unit, "");
+        assert_eq!(entries[0].priority, 6);
+        assert_eq!(entries[0].timestamp, "");
+        assert_eq!(entries[0].message, "bare message");
+    }
+
+    #[test]
+    fn parse_skips_blank_lines() {
+        let json = "{ \"MESSAGE\":\"msg\",\"__CURSOR\":\"c1\"}\n\n{\"MESSAGE\":\"msg2\",\"__CURSOR\":\"c2\"}";
+        let entries = parse_journal_json(json).unwrap();
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn parse_unit_without_service_suffix() {
+        let json = r#"{"_SYSTEMD_UNIT":"sshd","PRIORITY":"3","MESSAGE":"err","__REALTIME_TIMESTAMP":"1","__CURSOR":"c"}"#;
+        let entries = parse_journal_json(json).unwrap();
+        assert_eq!(entries[0].unit, "sshd");
     }
 }

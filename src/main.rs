@@ -39,7 +39,6 @@ fn main() {
 
 fn run(cli: Cli) -> Result<(), AppError> {
     let cfg = config::load(&cli.config, config::EnvOverrides::from_env())?;
-    let cursor = journal::read_cursor(&cfg.state.cursor_file)?;
 
     let matcher = cfg
         .journal
@@ -47,20 +46,14 @@ fn run(cli: Cli) -> Result<(), AppError> {
         .as_ref()
         .expect("unit_matcher is always built by config::load");
 
-    match journal::query_journal(cursor.as_deref())? {
-        JournalResult::FirstRun(Some(baseline_cursor)) => {
-            journal::save_cursor(&cfg.state.cursor_file, &baseline_cursor)?;
+    match journal::query_journal(&cfg.state.cursor_file)? {
+        JournalResult::FirstRun(Some(_)) => {
             eprintln!("first run: cursor saved, will report new entries on next run");
         }
         JournalResult::FirstRun(None) => {
             eprintln!("first run: journal is empty, nothing to save");
         }
         JournalResult::Entries(raw_entries) => {
-            // Save cursor from last raw entry before filtering, so we don't re-scan
-            if let Some(last) = raw_entries.last() {
-                journal::save_cursor(&cfg.state.cursor_file, &last.cursor)?;
-            }
-
             let entries = filter::filter_entries(
                 raw_entries,
                 matcher,

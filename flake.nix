@@ -23,8 +23,6 @@
             pkgs.clippy
             pkgs.rustfmt
             pkgs.rust-analyzer
-            pkgs.pkg-config
-            pkgs.systemdLibs
             pkgs.just
           ];
         };
@@ -34,8 +32,6 @@
           version = "0.1.0";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
-          nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = [ pkgs.systemdLibs ];
         };
       }
     );

@@ -23,13 +23,13 @@
 
 ### Fixed
 
-- First-run journal detection on real systems with multiple journal files. `seek_tail()` + `previous()` returned 0 due to a long-standing libsystemd bug ([systemd#9934](https://github.com/systemd/systemd/issues/9934), [systemd#17662](https://github.com/systemd/systemd/issues/17662)). Replaced with `seek_realtime_usec` to a recent timestamp, with `seek_tail` as fallback.
-- Pin `psm` to 0.1.27 to support Rust versions older than 1.87 (e.g. nixos-25.05). `psm` 0.1.28+ pulls in `ar_archive_writer` which uses `if let` chains, stabilized in Rust 1.87.
+- Journal reading on NixOS systems. The `systemd` Rust crate (0.10.x) could not read journal entries — every seek/iteration method returned `Ok(0)` despite matching libsystemd versions and root access. Replaced with `journalctl` subprocess. See Changed below.
 
 ### Changed
 
+- **Journal backend: replaced `systemd` crate with `journalctl` subprocess.** The crate's FFI bindings silently returned zero entries on real NixOS systems. `journalctl` reads the same journal correctly. Cursor persistence is now handled natively by `journalctl --cursor-file`, removing the manual `read_cursor`/`save_cursor` functions and atomic write-tmp-rename logic. First run uses `journalctl -n 0 --cursor-file=...` to establish a baseline without reading entries; subsequent runs use `journalctl --output=json --cursor-file=...` and parse one JSON object per line.
+- Removed `systemd` and `psm` crate dependencies. Removed `pkg-config` and `systemdLibs` from Nix build inputs.
 - Error variants (`Config`, `Journal`, `Email`) wrap `Cow<'static, str>` instead of `String`. Static error messages avoid heap allocation.
 - `config::load()` takes `EnvOverrides` by value. SMTP password and host are moved into the config instead of cloned.
 - `email::send_report()` takes `EmailConfig` by value and owned `String` for subject and body. Username and password are moved directly into `Credentials` instead of cloned/reallocated.
-- Journal entry parsing uses `record.remove()` instead of `.get().cloned()`, taking ownership from the `BTreeMap`. The `.service` suffix is stripped in-place with `truncate()`.
 - `filter_entries` uses `retain()` instead of `into_iter().filter().collect()`, reusing the existing `Vec` allocation.
