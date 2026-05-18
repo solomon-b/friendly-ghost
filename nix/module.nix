@@ -5,12 +5,29 @@ let
   cfg = config.services.friendly-ghost;
   inherit (lib) mkEnableOption mkOption mkIf types;
 
+  sourceSection =
+    if cfg.source == "journal" then {
+      type = "journal";
+    } else {
+      type = "loki";
+      url = cfg.loki.url;
+      query = cfg.loki.query;
+      auth = cfg.loki.auth;
+    } // lib.optionalAttrs (cfg.loki.tenantId != null) {
+      tenant_id = cfg.loki.tenantId;
+    } // lib.optionalAttrs (cfg.loki.unitLabel != null) {
+      unit_label = cfg.loki.unitLabel;
+    } // lib.optionalAttrs (cfg.loki.hostLabel != null) {
+      host_label = cfg.loki.hostLabel;
+    };
+
   configFile = (pkgs.formats.toml {}).generate "friendly-ghost.toml" ({
-    journal = {
-      units = cfg.journal.units;
-      priority = cfg.journal.priority;
-    } // lib.optionalAttrs (cfg.journal.ignorePatterns != []) {
-      ignore_patterns = cfg.journal.ignorePatterns;
+    source = sourceSection;
+    filter = {
+      units = cfg.filter.units;
+      priority = cfg.filter.priority;
+    } // lib.optionalAttrs (cfg.filter.ignorePatterns != []) {
+      ignore_patterns = cfg.filter.ignorePatterns;
     };
     email = {
       smtp_host = cfg.email.smtpHost;
@@ -36,7 +53,7 @@ let
 in
 {
   options.services.friendly-ghost = {
-    enable = mkEnableOption "friendly-ghost systemd journal monitor";
+    enable = mkEnableOption "friendly-ghost log monitor";
 
     interval = mkOption {
       type = types.str;
@@ -45,10 +62,73 @@ in
       example = "hourly";
     };
 
-    journal = {
+    source = mkOption {
+      type = types.enum [ "journal" "loki" ];
+      default = "journal";
+      description = "Log source: local systemd journal or remote Grafana Loki.";
+    };
+
+    loki = {
+      url = mkOption {
+        type = types.str;
+        default = "";
+        description = "Loki base URL (e.g. http://loki.example.com:3100). Required when source = \"loki\".";
+      };
+
+      query = mkOption {
+        type = types.str;
+        default = "";
+        description = "LogQL selector. Required when source = \"loki\".";
+        example = ''{job=~"nginx|sshd"}'';
+      };
+
+      auth = mkOption {
+        type = types.enum [ "none" "bearer" "basic" ];
+        default = "none";
+        description = "Loki auth mode. Credentials are read from environment variables (FRIENDLY_GHOST_LOKI_BEARER_TOKEN, FRIENDLY_GHOST_LOKI_BASIC_USER, FRIENDLY_GHOST_LOKI_BASIC_PASSWORD).";
+      };
+
+      tenantId = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Optional X-Scope-OrgID header value for multi-tenant Loki deployments.";
+      };
+
+      unitLabel = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Loki stream label that maps to the 'unit' field (defaults to 'service_name').";
+      };
+
+      hostLabel = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Loki stream label that maps to the 'host' field (defaults to 'host').";
+      };
+
+      bearerTokenFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "Path to a file containing the Loki bearer token. Sourced into FRIENDLY_GHOST_LOKI_BEARER_TOKEN at runtime.";
+      };
+
+      basicUserFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "Path to a file containing the Loki basic-auth user.";
+      };
+
+      basicPasswordFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "Path to a file containing the Loki basic-auth password.";
+      };
+    };
+
+    filter = {
       units = mkOption {
         type = types.listOf types.str;
-        description = "Systemd units to monitor. Supports regex patterns (auto-anchored).";
+        description = "Service/unit names to monitor. Regex patterns are supported (auto-anchored). For journal source these are systemd units; for Loki source these match against the configured unit_label.";
         example = [ "nginx" "sshd" "web-.*" ];
       };
 
@@ -113,7 +193,7 @@ in
     environmentFile = mkOption {
       type = types.nullOr types.path;
       default = null;
-      description = "Path to environment file containing FRIENDLY_GHOST_SMTP_PASSWORD and optionally FRIENDLY_GHOST_LLM_API_KEY.";
+      description = "Path to environment file containing FRIENDLY_GHOST_SMTP_PASSWORD and optionally FRIENDLY_GHOST_LLM_API_KEY, FRIENDLY_GHOST_LOKI_BEARER_TOKEN, etc.";
       example = "/run/secrets/friendly-ghost.env";
     };
 
@@ -166,10 +246,18 @@ in
         assertion = !(cfg.email.passwordFile != null && cfg.environmentFile != null);
         message = "services.friendly-ghost: both email.passwordFile and environmentFile are set. email.passwordFile takes precedence for FRIENDLY_GHOST_SMTP_PASSWORD.";
       }
+      {
+        assertion = cfg.source != "loki" || cfg.loki.url != "";
+        message = "services.friendly-ghost: loki.url must be set when source = \"loki\".";
+      }
+      {
+        assertion = cfg.source != "loki" || cfg.loki.query != "";
+        message = "services.friendly-ghost: loki.query must be set when source = \"loki\".";
+      }
     ];
 
     systemd.services.friendly-ghost = {
-      description = "friendly-ghost journal monitor";
+      description = "friendly-ghost log monitor";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       serviceConfig = {
@@ -184,12 +272,24 @@ in
               FRIENDLY_GHOST_LLM_API_KEY="$(< ${lib.escapeShellArg cfg.llm.apiKeyFile})"
               export FRIENDLY_GHOST_LLM_API_KEY
             ''}
+            ${lib.optionalString (cfg.source == "loki" && cfg.loki.bearerTokenFile != null) ''
+              FRIENDLY_GHOST_LOKI_BEARER_TOKEN="$(< ${lib.escapeShellArg cfg.loki.bearerTokenFile})"
+              export FRIENDLY_GHOST_LOKI_BEARER_TOKEN
+            ''}
+            ${lib.optionalString (cfg.source == "loki" && cfg.loki.basicUserFile != null) ''
+              FRIENDLY_GHOST_LOKI_BASIC_USER="$(< ${lib.escapeShellArg cfg.loki.basicUserFile})"
+              export FRIENDLY_GHOST_LOKI_BASIC_USER
+            ''}
+            ${lib.optionalString (cfg.source == "loki" && cfg.loki.basicPasswordFile != null) ''
+              FRIENDLY_GHOST_LOKI_BASIC_PASSWORD="$(< ${lib.escapeShellArg cfg.loki.basicPasswordFile})"
+              export FRIENDLY_GHOST_LOKI_BASIC_PASSWORD
+            ''}
             exec ${self.packages.${pkgs.system}.default}/bin/friendly-ghost --config ${configFile}
           '';
         in "${wrapper}";
         DynamicUser = true;
         StateDirectory = "friendly-ghost";
-        SupplementaryGroups = [ "systemd-journal" ];
+        SupplementaryGroups = lib.optional (cfg.source == "journal") "systemd-journal";
       } // lib.optionalAttrs (cfg.environmentFile != null) {
         EnvironmentFile = cfg.environmentFile;
       };

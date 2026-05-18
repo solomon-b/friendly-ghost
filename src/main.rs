@@ -42,7 +42,7 @@ fn run(cli: Cli) -> Result<(), AppError> {
     let cfg = config::load(&cli.config, config::EnvOverrides::from_env())?;
 
     let matcher = cfg
-        .journal
+        .filter
         .unit_matcher
         .as_ref()
         .expect("unit_matcher is always built by config::load");
@@ -52,14 +52,14 @@ fn run(cli: Cli) -> Result<(), AppError> {
             eprintln!("first run: cursor saved, will report new entries on next run");
         }
         LogResult::FirstRun(None) => {
-            eprintln!("first run: journal is empty, nothing to save");
+            eprintln!("first run: log source is empty, nothing to save");
         }
         LogResult::Entries(raw_entries) => {
             let entries = filter::filter_entries(
                 raw_entries,
                 matcher,
-                cfg.journal.priority,
-                cfg.journal.ignore_matcher.as_ref(),
+                cfg.filter.priority,
+                cfg.filter.ignore_matcher.as_ref(),
             );
 
             if entries.is_empty() {
