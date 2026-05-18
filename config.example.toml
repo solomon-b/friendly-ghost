@@ -45,7 +45,13 @@ type = "journal"
 # filter; these rules are defense-in-depth.
 
 [filter]
-units = ["nginx", "sshd", "web-.*"]    # regex, auto-anchored
+# Regex against the unit name as the source emits it.
+# - Journal source: full systemd unit names like "nginx.service", "init.scope".
+# - Loki source: whatever your `unit_label` resolves to (could be "nginx" if
+#   that's the literal label value, or "nginx.service" if it's set from
+#   _SYSTEMD_UNIT, or "homebox" if it's from container_name).
+# Patterns are auto-anchored with ^(?:...)$.
+units = ['nginx\.service', 'sshd\.service', 'web-.*\.service']
 priority = "err"                       # emerg, alert, crit, err, warning, notice, info, debug
 # ignore_patterns = ["Connection reset by peer", "upstream timed out.*retrying"]
 

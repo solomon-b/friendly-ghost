@@ -13,6 +13,7 @@
 
 ### Changed
 
+- **BREAKING: journal unit names are no longer suffix-stripped.** The journal source used to truncate `.service` from `_SYSTEMD_UNIT` so users could write `units = ["nginx"]` instead of `units = ["nginx.service"]`. That stripping was undocumented, inconsistent (it only handled `.service`, not `.scope`/`.timer`/`.socket`/etc.), and asymmetric with the Loki source which passes label values through verbatim. Now both sources emit unit names verbatim. Migration: update your `filter.units` patterns from `["nginx", "sshd"]` to `['nginx\.service', 'sshd\.service']`, or use suffix-agnostic regexes like `["nginx.*", "sshd.*"]`.
 - **BREAKING: config schema.** `[journal]` is renamed to `[filter]` (its fields — `units`, `priority`, `ignore_patterns` — are source-agnostic filter rules) and a `[source]` discriminator table is required. Migration: rename the section header and add a `[source]` block above it with `type = "journal"`. `config::load` detects the old layout and produces a migration hint pointing at the new schema.
 - **BREAKING: Nix module.** `services.friendly-ghost.journal` is renamed to `services.friendly-ghost.filter`. New options: `services.friendly-ghost.source` (`"journal"` or `"loki"`), `services.friendly-ghost.loki` (URL, query, auth, secret file paths).
 - `JournalResult` renamed to `LogResult` and moved to `src/source.rs`. The type is source-agnostic; the rename makes that explicit.

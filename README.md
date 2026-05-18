@@ -63,7 +63,10 @@ Copy `config.example.toml` and edit. The filter rules apply to both source types
 
 ```toml
 [filter]
-units = ["nginx", "sshd", "web-.*"]   # regex, auto-anchored
+# Regex against the unit name as the source emits it. Journal source carries
+# full systemd unit names ("nginx.service", "init.scope"); Loki source uses
+# whatever your `unit_label` resolves to. Patterns are auto-anchored.
+units = ['nginx\.service', 'sshd\.service', 'web-.*\.service']
 priority = "err"                      # emerg, alert, crit, err, warning, notice, info, debug
 ignore_patterns = ["Connection reset by peer"]   # optional
 
@@ -137,7 +140,7 @@ Add the flake to your inputs and import the module:
             source = "journal";  # or "loki"
 
             filter = {
-              units = [ "nginx" "sshd" "web-.*" ];
+              units = [ ''nginx\.service'' ''sshd\.service'' ''web-.*\.service'' ];
               priority = "err";
               ignorePatterns = [ "Connection reset by peer" ];
             };

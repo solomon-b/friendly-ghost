@@ -125,14 +125,11 @@ fn parse_journal_json(output: &str, local_host: &str) -> Result<Vec<JournalEntry
             .map(String::from)
             .unwrap_or_else(|| local_host.to_string());
 
-        let mut unit = obj
+        let unit = obj
             .get("_SYSTEMD_UNIT")
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
-        if unit.ends_with(".service") {
-            unit.truncate(unit.len() - ".service".len());
-        }
 
         let priority = obj
             .get("PRIORITY")
@@ -173,7 +170,7 @@ mod tests {
         let json = r#"{"_SYSTEMD_UNIT":"nginx.service","PRIORITY":"3","MESSAGE":"segfault","_SOURCE_REALTIME_TIMESTAMP":"1776103665598487","__CURSOR":"s=abc123"}"#;
         let entries = parse_journal_json(json, "local-host").unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].unit, "nginx");
+        assert_eq!(entries[0].unit, "nginx.service");
         assert_eq!(entries[0].priority, 3);
         assert_eq!(entries[0].message, "segfault");
         assert_eq!(entries[0].timestamp, "1776103665598487");
@@ -181,10 +178,23 @@ mod tests {
     }
 
     #[test]
-    fn parse_strips_service_suffix() {
-        let json = r#"{"_SYSTEMD_UNIT":"kpbj-web.service","PRIORITY":"6","MESSAGE":"ok","__REALTIME_TIMESTAMP":"123","__CURSOR":"c1"}"#;
-        let entries = parse_journal_json(json, "local-host").unwrap();
-        assert_eq!(entries[0].unit, "kpbj-web");
+    fn parse_preserves_unit_suffix() {
+        // unit names are passed through verbatim — no automatic suffix
+        // stripping. systemd carries .service/.scope/.timer/etc; users
+        // write filter regexes that account for them.
+        let cases = [
+            ("nginx.service", "nginx.service"),
+            ("init.scope", "init.scope"),
+            ("friendly-ghost.timer", "friendly-ghost.timer"),
+            ("dbus.socket", "dbus.socket"),
+        ];
+        for (input, expected) in cases {
+            let json = format!(
+                r#"{{"_SYSTEMD_UNIT":"{input}","MESSAGE":"x","__CURSOR":"c"}}"#
+            );
+            let entries = parse_journal_json(&json, "local-host").unwrap();
+            assert_eq!(entries[0].unit, expected);
+        }
     }
 
     #[test]
@@ -207,8 +217,8 @@ mod tests {
 {"_SYSTEMD_UNIT":"b.service","PRIORITY":"4","MESSAGE":"warn1","__REALTIME_TIMESTAMP":"2","__CURSOR":"c2"}"#;
         let entries = parse_journal_json(json, "local-host").unwrap();
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].unit, "a");
-        assert_eq!(entries[1].unit, "b");
+        assert_eq!(entries[0].unit, "a.service");
+        assert_eq!(entries[1].unit, "b.service");
     }
 
     #[test]
@@ -235,7 +245,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_unit_without_service_suffix() {
+    fn parse_unit_without_suffix_is_passed_through() {
+        // systemd usually emits suffixes but tolerate a bare value too.
         let json = r#"{"_SYSTEMD_UNIT":"sshd","PRIORITY":"3","MESSAGE":"err","__REALTIME_TIMESTAMP":"1","__CURSOR":"c"}"#;
         let entries = parse_journal_json(json, "local-host").unwrap();
         assert_eq!(entries[0].unit, "sshd");

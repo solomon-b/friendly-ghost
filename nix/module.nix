@@ -128,8 +128,8 @@ in
     filter = {
       units = mkOption {
         type = types.listOf types.str;
-        description = "Service/unit names to monitor. Regex patterns are supported (auto-anchored). For journal source these are systemd units; for Loki source these match against the configured unit_label.";
-        example = [ "nginx" "sshd" "web-.*" ];
+        description = "Regex patterns matched against the unit name as the source emits it (auto-anchored). Journal source carries full systemd unit names like \"nginx.service\" or \"init.scope\"; Loki source uses whatever your unit_label resolves to. Escape the dot in suffixes.";
+        example = [ ''nginx\.service'' ''sshd\.service'' ''web-.*\.service'' ];
       };
 
       priority = mkOption {
