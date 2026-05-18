@@ -3,22 +3,14 @@ use std::process::Command;
 
 use crate::error::AppError;
 use crate::filter::JournalEntry;
-
-/// Result of querying the journal.
-#[derive(Debug)]
-pub enum JournalResult {
-    /// First run — baseline cursor to save. None if the journal is empty.
-    FirstRun(Option<String>),
-    /// Subsequent run — entries since last cursor.
-    Entries(Vec<JournalEntry>),
-}
+use crate::source::LogResult;
 
 /// Query the systemd journal for entries using a journalctl subprocess.
 ///
 /// Uses `--cursor-file` for cursor management:
 /// - First run (no cursor file): establishes baseline with `journalctl -n 0`
 /// - Subsequent runs: reads all entries since last cursor with `journalctl --output=json`
-pub fn query_journal(cursor_file: &Path) -> Result<JournalResult, AppError> {
+pub fn query_journal(cursor_file: &Path) -> Result<LogResult, AppError> {
     let first_run = !cursor_file.exists();
 
     if first_run {
@@ -44,9 +36,9 @@ pub fn query_journal(cursor_file: &Path) -> Result<JournalResult, AppError> {
         }
 
         if cursor_file.exists() {
-            Ok(JournalResult::FirstRun(Some("baseline".to_string())))
+            Ok(LogResult::FirstRun(Some("baseline".to_string())))
         } else {
-            Ok(JournalResult::FirstRun(None))
+            Ok(LogResult::FirstRun(None))
         }
     } else {
         let output = Command::new("journalctl")
@@ -65,7 +57,7 @@ pub fn query_journal(cursor_file: &Path) -> Result<JournalResult, AppError> {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let entries = parse_journal_json(&stdout)?;
-        Ok(JournalResult::Entries(entries))
+        Ok(LogResult::Entries(entries))
     }
 }
 

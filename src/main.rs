@@ -5,13 +5,14 @@ mod filter;
 mod journal;
 mod llm;
 mod report;
+mod source;
 
 use std::path::PathBuf;
 
 use clap::Parser;
 
 use error::AppError;
-use journal::JournalResult;
+use source::LogResult;
 
 #[derive(Parser)]
 #[command(
@@ -46,14 +47,14 @@ fn run(cli: Cli) -> Result<(), AppError> {
         .as_ref()
         .expect("unit_matcher is always built by config::load");
 
-    match journal::query_journal(&cfg.state.cursor_file)? {
-        JournalResult::FirstRun(Some(_)) => {
+    match source::query(&cfg.state.cursor_file)? {
+        LogResult::FirstRun(Some(_)) => {
             eprintln!("first run: cursor saved, will report new entries on next run");
         }
-        JournalResult::FirstRun(None) => {
+        LogResult::FirstRun(None) => {
             eprintln!("first run: journal is empty, nothing to save");
         }
-        JournalResult::Entries(raw_entries) => {
+        LogResult::Entries(raw_entries) => {
             let entries = filter::filter_entries(
                 raw_entries,
                 matcher,
