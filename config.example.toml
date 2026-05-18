@@ -1,35 +1,87 @@
 # friendly-ghost configuration
 # Copy to /etc/friendly-ghost/config.toml and edit
 
-[journal]
-# Entries are matched as regex (auto-anchored). Plain names match exactly.
-units = ["nginx", "sshd", "web-.*"]
-priority = "err"  # emerg, alert, crit, err, warning, notice, info, debug
-# Regex patterns to ignore (matched against message text). Optional.
+# ---- Log source ---------------------------------------------------------
+# Pick where to read logs from. Two source types are supported:
+#
+#   type = "journal"  → local systemd journal (default; the historical mode)
+#   type = "loki"     → remote Grafana Loki server
+
+[source]
+type = "journal"
+
+# Uncomment to use Loki instead:
+# [source]
+# type = "loki"
+# url = "http://loki.example.com:3100"
+# query = '{job=~"nginx|sshd"}'          # LogQL selector (required)
+# auth = "none"                          # "none" | "bearer" | "basic"
+# tenant_id = "team-a"                   # optional, sets X-Scope-OrgID
+#
+# # Which Loki stream label maps to JournalEntry.unit (defaults to "service_name")
+# unit_label = "service_name"
+# unit_label_fallback = ["job"]
+#
+# # Which Loki stream label identifies the host (defaults to "host")
+# host_label = "host"
+# host_label_fallback = ["hostname", "instance", "nodename"]
+#
+# # Which labels carry severity. First found wins; lowercased value is looked up
+# # in priority_mapping below. Falls back to default_priority on miss.
+# level_labels = ["level", "severity", "lvl"]
+# default_priority = 6
+#
+# timeout_seconds = 30
+# max_entries_per_query = 5000
+#
+# [source.priority_mapping]
+# # Optional override. Defaults cover the common levels:
+# # emerg=0 alert=1 crit=2 critical=2 error=3 err=3 warn=4 warning=4
+# # notice=5 info=6 debug=7 trace=7 fatal=0
+# fatal = 0
+
+# ---- Filter -------------------------------------------------------------
+# Applied AFTER fetching from the source. For Loki, LogQL is the primary
+# filter; these rules are defense-in-depth.
+
+[filter]
+units = ["nginx", "sshd", "web-.*"]    # regex, auto-anchored
+priority = "err"                       # emerg, alert, crit, err, warning, notice, info, debug
 # ignore_patterns = ["Connection reset by peer", "upstream timed out.*retrying"]
+
+# ---- Email --------------------------------------------------------------
 
 [email]
 smtp_host = "mail.example.com"
 smtp_port = 587
 username = "alerts@example.com"
-# Set password via environment variable: FRIENDLY_GHOST_SMTP_PASSWORD
+# Set password via env: FRIENDLY_GHOST_SMTP_PASSWORD
 from = "alerts@example.com"
 to = ["admin@example.com"]
 subject_prefix = "[friendly-ghost]"
 
+# ---- State --------------------------------------------------------------
+# Each source manages its own format inside this file. Switching `type`
+# without deleting the file will produce a friendly error pointing here.
+
 [state]
 cursor_file = "/var/lib/friendly-ghost/cursor"
 
-# Optional: LLM-based anomaly detection
-# When enabled, filtered log entries are sent to an OpenAI-compatible API
-# for analysis. The LLM writes the email body directly.
-# A built-in system prompt defines the analysis behavior and response format.
-# Set API key via environment variable: FRIENDLY_GHOST_LLM_API_KEY
+# ---- LLM (optional) -----------------------------------------------------
+# When enabled, filtered entries are sent to an OpenAI-compatible API.
+# Set API key via env: FRIENDLY_GHOST_LLM_API_KEY
 #
 # [llm]
 # api_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 # model = "gemini-2.5-flash"
 # temperature = 0.1
 # max_tokens = 4096
-# Optional: provide additional context appended to the built-in prompt
 # system_prompt_file = "/etc/friendly-ghost/prompt.txt"
+
+# ---- Environment variables ---------------------------------------------
+# FRIENDLY_GHOST_SMTP_PASSWORD              required when [email] is set
+# FRIENDLY_GHOST_SMTP_HOST                  overrides [email].smtp_host
+# FRIENDLY_GHOST_LLM_API_KEY                required when [llm] is set
+# FRIENDLY_GHOST_LOKI_BEARER_TOKEN          required when [source].auth = "bearer"
+# FRIENDLY_GHOST_LOKI_BASIC_USER            required when [source].auth = "basic"
+# FRIENDLY_GHOST_LOKI_BASIC_PASSWORD        required when [source].auth = "basic"

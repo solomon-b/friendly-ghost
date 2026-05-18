@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.2.0 — Unreleased
+
+### Added
+
+- **Grafana Loki as an alternative log source.** Pick the source via the new `[source]` table: `type = "journal"` (the existing behavior) or `type = "loki"`. Loki source reads via `/loki/api/v1/query_range`, paginates by nanosecond timestamps, and supports three auth modes (`none`, `bearer`, `basic`) plus a `tenant_id` (`X-Scope-OrgID`) header. Auth secrets come from `FRIENDLY_GHOST_LOKI_BEARER_TOKEN` / `FRIENDLY_GHOST_LOKI_BASIC_USER` / `FRIENDLY_GHOST_LOKI_BASIC_PASSWORD`.
+- Configurable Loki label mappings: `unit_label` (default `service_name`), `host_label` (default `host`), `level_labels` (default `["level", "severity", "lvl"]`). Each unit/host has an optional fallback chain. Level values resolve through a configurable `priority_mapping` with sensible defaults covering `error`/`warn`/`info`/etc.
+- `host: String` field on every log entry. Journal source extracts `_HOSTNAME` from journalctl JSON; Loki source extracts from `host_label`. The local `/etc/hostname` is the fallback when the source-level value is missing.
+- Multi-host report layout. Single-host reports keep the historical "for `<host>`" header. Multi-host reports group entries by host into `=== <host> (N entries) ===` sections. Subject lines are host-aware: "N alerts on web01" for one host, "N alerts across M hosts" otherwise. LLM user messages render entries as `host/unit` for per-host correlation.
+- `src/loki.rs` (Loki source) and `src/source.rs` (`LogResult` enum + `source::query` dispatcher).
+- Cross-source state-file detection. If the configured `state.cursor_file` looks like the other source's format (a Loki state file at a journal path or vice versa), the error explains the cause instead of producing a cryptic parse failure.
+
+### Changed
+
+- **BREAKING: config schema.** `[journal]` is renamed to `[filter]` (its fields — `units`, `priority`, `ignore_patterns` — are source-agnostic filter rules) and a `[source]` discriminator table is required. Migration: rename the section header and add a `[source]` block above it with `type = "journal"`. `config::load` detects the old layout and produces a migration hint pointing at the new schema.
+- **BREAKING: Nix module.** `services.friendly-ghost.journal` is renamed to `services.friendly-ghost.filter`. New options: `services.friendly-ghost.source` (`"journal"` or `"loki"`), `services.friendly-ghost.loki` (URL, query, auth, secret file paths).
+- `JournalResult` renamed to `LogResult` and moved to `src/source.rs`. The type is source-agnostic; the rename makes that explicit.
+- `report::format_report` and `report::format_subject` derive host context from the entries themselves and no longer take an explicit `hostname` parameter.
+
+### Migration example
+
+Old (v0.1):
+
+```toml
+[journal]
+units = ["nginx", "sshd"]
+priority = "err"
+```
+
+New (v0.2):
+
+```toml
+[source]
+type = "journal"
+
+[filter]
+units = ["nginx", "sshd"]
+priority = "err"
+```
+
 ## 0.1.0 — Unreleased
 
 ### Added
