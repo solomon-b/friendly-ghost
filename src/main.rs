@@ -79,12 +79,8 @@ fn run(cli: Cli) -> Result<(), AppError> {
                     }
                 }
                 None => {
-                    let body = report::format_report(&entries, &hostname);
-                    let subject = report::format_subject(
-                        &cfg.email.subject_prefix,
-                        entries.len(),
-                        &hostname,
-                    );
+                    let body = report::format_report(&entries);
+                    let subject = report::format_subject(&cfg.email.subject_prefix, &entries);
                     (subject, body)
                 }
             };

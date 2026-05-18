@@ -3,10 +3,11 @@ use regex::RegexSet;
 use crate::config::Priority;
 use crate::error::AppError;
 
-/// A normalized journal entry for processing.
+/// A normalized log entry for processing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalEntry {
     pub timestamp: String,
+    pub host: String,
     pub unit: String,
     pub priority: u8,
     pub message: String,
@@ -84,6 +85,7 @@ mod tests {
     fn make_entry(unit: &str, priority: u8, msg: &str) -> JournalEntry {
         JournalEntry {
             timestamp: "2026-03-02T10:00:00Z".to_string(),
+            host: "test-host".to_string(),
             unit: unit.to_string(),
             priority,
             message: msg.to_string(),

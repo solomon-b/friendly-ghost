@@ -40,14 +40,20 @@ pub enum LlmVerdict {
 }
 
 /// Format a slice of journal entries into the user message sent to the LLM.
+/// Each entry is rendered as `host/unit` so the model can correlate per-host patterns.
 pub fn format_user_message(entries: &[JournalEntry]) -> String {
     let mut msg = String::new();
     writeln!(msg, "{} log entries:", entries.len()).unwrap();
     for entry in entries {
+        let host = if entry.host.is_empty() {
+            "(unknown host)"
+        } else {
+            entry.host.as_str()
+        };
         writeln!(
             msg,
-            "\n[{}] {} (priority {}): {}",
-            entry.timestamp, entry.unit, entry.priority, entry.message,
+            "\n[{}] {}/{} (priority {}): {}",
+            entry.timestamp, host, entry.unit, entry.priority, entry.message,
         )
         .unwrap();
     }
@@ -144,6 +150,7 @@ mod tests {
     fn make_entry(timestamp: &str, unit: &str, priority: u8, message: &str) -> JournalEntry {
         JournalEntry {
             timestamp: timestamp.to_string(),
+            host: "myhost".to_string(),
             unit: unit.to_string(),
             priority,
             message: message.to_string(),
