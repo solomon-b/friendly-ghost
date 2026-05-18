@@ -4,6 +4,7 @@ mod error;
 mod filter;
 mod journal;
 mod llm;
+mod loki;
 mod report;
 mod source;
 
@@ -47,7 +48,7 @@ fn run(cli: Cli) -> Result<(), AppError> {
         .as_ref()
         .expect("unit_matcher is always built by config::load");
 
-    match source::query(&cfg.state.cursor_file)? {
+    match source::query(&cfg)? {
         LogResult::FirstRun(Some(_)) => {
             eprintln!("first run: cursor saved, will report new entries on next run");
         }

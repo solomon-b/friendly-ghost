@@ -18,6 +18,9 @@ pub enum AppError {
     #[error("journal error: {0}")]
     Journal(Cow<'static, str>),
 
+    #[error("loki error: {0}")]
+    Loki(Cow<'static, str>),
+
     #[error("cursor file error at {path}: {source}")]
     CursorFile {
         path: PathBuf,

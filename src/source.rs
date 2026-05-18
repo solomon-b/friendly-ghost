@@ -1,5 +1,4 @@
-use std::path::Path;
-
+use crate::config::{Config, SourceConfig};
 use crate::error::AppError;
 use crate::filter::JournalEntry;
 
@@ -13,9 +12,9 @@ pub enum LogResult {
 }
 
 /// Dispatch to the configured log source.
-///
-/// Today only the journal source is wired up; a future commit will accept a
-/// `&Config` and pick between `journal` and `loki` based on `SourceConfig`.
-pub fn query(cursor_file: &Path) -> Result<LogResult, AppError> {
-    crate::journal::query_journal(cursor_file)
+pub fn query(cfg: &Config) -> Result<LogResult, AppError> {
+    match &cfg.source {
+        SourceConfig::Journal(_) => crate::journal::query_journal(&cfg.state.cursor_file),
+        SourceConfig::Loki(loki) => crate::loki::query_loki(loki, &cfg.state.cursor_file),
+    }
 }

@@ -13,6 +13,10 @@ use crate::source::LogResult;
 pub fn query_journal(cursor_file: &Path) -> Result<LogResult, AppError> {
     let first_run = !cursor_file.exists();
 
+    if !first_run {
+        check_state_file_is_journal_format(cursor_file)?;
+    }
+
     if first_run {
         if let Some(parent) = cursor_file.parent() {
             std::fs::create_dir_all(parent).map_err(|e| AppError::CursorFile {
@@ -68,6 +72,32 @@ fn read_local_hostname() -> String {
     std::fs::read_to_string("/etc/hostname")
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
+}
+
+/// Detect a Loki-format state file at the journal cursor path. journalctl's
+/// own format is opaque key=value; if the file starts with `{` it's almost
+/// certainly a Loki state file left over from a `[source].type` swap.
+fn check_state_file_is_journal_format(path: &Path) -> Result<(), AppError> {
+    let mut buf = [0u8; 8];
+    let bytes = match std::fs::File::open(path).and_then(|mut f| {
+        use std::io::Read;
+        f.read(&mut buf)
+    }) {
+        Ok(n) => &buf[..n],
+        Err(_) => return Ok(()), // let journalctl produce the real error
+    };
+    let first = bytes.iter().find(|b| !b.is_ascii_whitespace()).copied();
+    if first == Some(b'{') {
+        return Err(AppError::Journal(
+            format!(
+                "state file at {} looks like a Loki state file (JSON); \
+                 delete it to bootstrap a journal cursor fresh",
+                path.display()
+            )
+            .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Parse journalctl JSON output (one JSON object per line) into JournalEntry structs.

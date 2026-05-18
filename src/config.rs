@@ -18,6 +18,7 @@ pub struct Config {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
+#[allow(clippy::large_enum_variant)] // single instance per process; not worth boxing
 pub enum SourceConfig {
     Journal(JournalSourceConfig),
     Loki(LokiSourceConfig),
